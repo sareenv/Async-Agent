@@ -151,13 +151,15 @@ jobs:
               
               # Check for completion handlers
               COMPLETION_COUNT=$(grep -c "completion:" "$file" 2>/dev/null || echo "0")
-            COMPLETION_COUNT=$(echo "$COMPLETION_COUNT" | tr -d '[:space:]')
-            # Check for @escaping closures
-            ESCAPING_COUNT=$(grep -c "@escaping" "$file" 2>/dev/null || echo "0")
-            ESCAPING_COUNT=$(echo "$ESCAPING_COUNT" | tr -d '[:space:]')
-            # Check for continuations
-            CONTINUATION_COUNT=$(grep -c "withCheckedContinuation\|withUnsafeContinuation" "$file" 2>/dev/null || echo "0")
-            CONTINUATION_COUNT=$(echo "$CONTINUATION_COUNT" | tr -d '[:space:]')
+              COMPLETION_COUNT=$(echo "$COMPLETION_COUNT" | tr -d '[:space:]')
+              # Check for @escaping closures
+              ESCAPING_COUNT=$(grep -c "@escaping" "$file" 2>/dev/null || echo "0")
+              ESCAPING_COUNT=$(echo "$ESCAPING_COUNT" | tr -d '[:space:]')
+              # Check for continuations
+              CONTINUATION_COUNT=$(grep -c "withCheckedContinuation\|withUnsafeContinuation" "$file" 2>/dev/null || echo "0")
+              CONTINUATION_COUNT=$(echo "$CONTINUATION_COUNT" | tr -d '[:space:]')
+              
+              if [ "$COMPLETION_COUNT" -gt 0 ] || [ "$ESCAPING_COUNT" -gt 0 ] || [ "$CONTINUATION_COUNT" -gt 0 ]; then
                 echo "### \`$file\`" >> "$REPORT_FILE"
                 echo "" >> "$REPORT_FILE"
                 
