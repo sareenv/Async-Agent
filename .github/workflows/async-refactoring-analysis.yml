@@ -43,11 +43,23 @@ jobs:
             COMPARE_REF="origin/$BASE_REF"
           else
             # For push events, compare with previous commit
-            COMPARE_REF="HEAD~1"
+            # Check if HEAD~1 exists (won't exist on first commit)
+            if git rev-parse HEAD~1 >/dev/null 2>&1; then
+              COMPARE_REF="HEAD~1"
+            else
+              # First commit - analyze all Swift files
+              echo "First commit detected, analyzing all Swift files"
+              COMPARE_REF=""
+            fi
           fi
           
           # Get changed Swift files
-          CHANGED_FILES=$(git diff --name-only --diff-filter=ACMRT $COMPARE_REF...HEAD | grep '\.swift$' || true)
+          if [ -z "$COMPARE_REF" ]; then
+            # First commit - get all Swift files
+            CHANGED_FILES=$(find . -name '*.swift' -type f | grep -v '.build/' || true)
+          else
+            CHANGED_FILES=$(git diff --name-only --diff-filter=ACMRT $COMPARE_REF HEAD | grep '\.swift$' || true)
+          fi
           
           if [ -z "$CHANGED_FILES" ]; then
             echo "No Swift files changed."
@@ -76,20 +88,15 @@ jobs:
           path: changed_files.txt
           retention-days: 30
       
-      - name: Setup Node.js for Copilot CLI
-        if: steps.changed-files.outputs.has_swift_changes == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      # NOTE: GitHub Copilot CLI automation is not currently available in GitHub Actions
+      # This section would need to be implemented using:
+      # - GitHub Copilot Workspace API (when available)
+      # - Custom analysis scripts
+      # - Third-party AI/LLM services with appropriate API keys
       
-      - name: Install GitHub Copilot CLI
-        if: steps.changed-files.outputs.has_swift_changes == 'true'
-        run: npm install -g @githubnext/github-copilot-cli
-      
-      - name: Run CompletionChecker Agent via Copilot CLI
+      - name: Run Async/Await Analysis
         if: steps.changed-files.outputs.has_swift_changes == 'true'
         env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -98,44 +105,103 @@ jobs:
           echo "Running Async/Await Refactoring Analysis"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
-          # Construct the agent system prompt
-          AGENT_PROMPT=$(cat .github/agents/completionchecker.agent.md)
-          
-          # Add the file list from changed_files.txt
-          FILES_TO_ANALYZE=$(cat changed_files.txt)
-          
-          # Build the complete prompt
-          PROMPT="$AGENT_PROMPT"
-          PROMPT+=$'\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-          PROMPT+=$'Context:\n'
-          PROMPT+="- Repository: $GITHUB_REPOSITORY"
-          PROMPT+=$'\n- Event: ${{ github.event_name }}'
-          PROMPT+=$'\n- Branch: ${{ github.ref_name }}'
-          PROMPT+=$'\n\nFiles to Analyze:\n'
-          PROMPT+="$FILES_TO_ANALYZE"
-          PROMPT+=$'\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-          PROMPT+=$'Task:\n'
-          PROMPT+=$'1. Analyze the Swift files listed above for completion handlers and continuations\n'
-          PROMPT+=$'2. Invoke the Reporter agent to get refactoring recommendations\n'
-          PROMPT+=$'3. Generate a comprehensive analysis report at /async-refactoring-reports/analysis-report.md\n'
-          PROMPT+=$'4. If any HIGH PRIORITY refactoring opportunities are found, include this exact message at the end:\n'
-          PROMPT+=$'   HIGH PRIORITY ASYNC REFACTORING REQUIRED\n'
-          PROMPT+=$'5. Do not modify this message in any way.\n'
-          
-          echo "Invoking GitHub Copilot Agent..."
-          echo ""
+          # Verify agent file exists
+          if [ ! -f ".github/agents/completionchecker.agent.md" ]; then
+            echo "❌ Error: Agent configuration file not found"
+            exit 1
+          fi
           
           # Create reports directory
           mkdir -p async-refactoring-reports
           
-          # Execute Copilot CLI
-          # Using < /dev/null to prevent interactive input
-          github-copilot-cli --prompt "$PROMPT" --allow-all-tools --allow-all-paths < /dev/null || {
-            echo "⚠️  Copilot CLI execution completed with warnings"
-          }
+          # Read the file list
+          FILES_TO_ANALYZE=$(cat changed_files.txt)
+          
+          echo "Files to analyze:"
+          echo "$FILES_TO_ANALYZE"
+          echo ""
+          
+          # Basic pattern detection for completion handlers and continuations
+          echo "Performing basic async/await pattern detection..."
+          echo ""
+          
+          REPORT_FILE="async-refactoring-reports/analysis-report.md"
+          echo "# Async/Await Refactoring Analysis" > "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "**Repository:** $GITHUB_REPOSITORY" >> "$REPORT_FILE"
+          echo "**Event:** ${{ github.event_name }}" >> "$REPORT_FILE"
+          echo "**Branch:** ${{ github.ref_name }}" >> "$REPORT_FILE"
+          echo "**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "## Files Analyzed" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "\`\`\`" >> "$REPORT_FILE"
+          echo "$FILES_TO_ANALYZE" >> "$REPORT_FILE"
+          echo "\`\`\`" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "## Pattern Detection Results" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          
+          HIGH_PRIORITY_FOUND=false
+          
+          # Analyze each file for patterns
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              echo "Analyzing: $file"
+              
+              # Check for completion handlers
+              COMPLETION_COUNT=$(grep -c "completion:" "$file" 2>/dev/null || echo "0")
+              # Check for @escaping closures
+              ESCAPING_COUNT=$(grep -c "@escaping" "$file" 2>/dev/null || echo "0")
+              # Check for continuations
+              CONTINUATION_COUNT=$(grep -c "withCheckedContinuation\|withUnsafeContinuation" "$file" 2>/dev/null || echo "0")
+              
+              if [ "$COMPLETION_COUNT" -gt 0 ] || [ "$ESCAPING_COUNT" -gt 0 ] || [ "$CONTINUATION_COUNT" -gt 0 ]; then
+                echo "### \`$file\`" >> "$REPORT_FILE"
+                echo "" >> "$REPORT_FILE"
+                
+                if [ "$COMPLETION_COUNT" -gt 0 ]; then
+                  echo "- **Completion handlers found:** $COMPLETION_COUNT" >> "$REPORT_FILE"
+                  HIGH_PRIORITY_FOUND=true
+                fi
+                
+                if [ "$ESCAPING_COUNT" -gt 0 ]; then
+                  echo "- **@escaping closures found:** $ESCAPING_COUNT" >> "$REPORT_FILE"
+                fi
+                
+                if [ "$CONTINUATION_COUNT" -gt 0 ]; then
+                  echo "- **Continuations found:** $CONTINUATION_COUNT" >> "$REPORT_FILE"
+                fi
+                
+                echo "" >> "$REPORT_FILE"
+              fi
+            fi
+          done < changed_files.txt
+          
+          echo "" >> "$REPORT_FILE"
+          echo "## Recommendations" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          
+          if [ "$HIGH_PRIORITY_FOUND" = true ]; then
+            echo "⚠️  Completion handlers detected" >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "Consider refactoring completion handler-based code to use async/await:" >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "1. Replace completion handlers with async functions" >> "$REPORT_FILE"
+            echo "2. Use \`await\` instead of completion callbacks" >> "$REPORT_FILE"
+            echo "3. Leverage structured concurrency (Task, async let)" >> "$REPORT_FILE"
+            echo "4. Replace \`@escaping\` with async/await patterns" >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "HIGH PRIORITY ASYNC REFACTORING REQUIRED" >> "$REPORT_FILE"
+          else
+            echo "✅ No completion handlers detected in changed files." >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "The analyzed files appear to follow modern Swift concurrency patterns." >> "$REPORT_FILE"
+          fi
           
           echo ""
           echo "✅ Analysis complete"
+          cat "$REPORT_FILE"
       
       - name: Upload analysis report
         if: always() && steps.changed-files.outputs.has_swift_changes == 'true'
