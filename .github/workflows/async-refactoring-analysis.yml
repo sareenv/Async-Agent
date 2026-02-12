@@ -7,12 +7,14 @@ on:
       - main
     paths:
       - '**/*.swift'
+      - '.github/workflows/async-refactoring-analysis.yml'
   push:
     branches:
       - develop
       - main
     paths:
       - '**/*.swift'
+      - '.github/workflows/async-refactoring-analysis.yml'
 
 jobs:
   async-refactoring-check:
