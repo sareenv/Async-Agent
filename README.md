@@ -330,10 +330,6 @@ To improve agents:
 2. Test with sample files in `test-files/`
 3. Validate output matches expected results
 
-## License
-
-[Add your license here]
-
 ## Resources
 
 - [Swift Concurrency Documentation](https://docs.swift.org/swift-book/LanguageGuide/Concurrency.html)
