@@ -1,0 +1,250 @@
+name: Async/Await Refactoring Analysis
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - '**/*.swift'
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - '**/*.swift'
+
+jobs:
+  async-refactoring-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # For commenting on PRs
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for comparison
+      
+      - name: Get changed Swift files
+        id: changed-files
+        run: |
+          set -euo pipefail
+          
+          echo "Finding changed Swift files compared to develop branch..."
+          
+          # Determine the base branch for comparison
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BASE_REF="${{ github.event.pull_request.base.ref }}"
+            git fetch origin $BASE_REF
+            COMPARE_REF="origin/$BASE_REF"
+          else
+            # For push events, compare with develop
+            git fetch origin develop
+            COMPARE_REF="origin/develop"
+          fi
+          
+          # Get changed Swift files
+          CHANGED_FILES=$(git diff --name-only --diff-filter=ACMRT $COMPARE_REF...HEAD | grep '\.swift$' || true)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No Swift files changed."
+            echo "has_swift_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Save to file
+          echo "$CHANGED_FILES" > changed_files.txt
+          
+          # Display what we found
+          echo "Changed Swift files:"
+          cat changed_files.txt
+          
+          # Count files
+          FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l)
+          echo "Total changed Swift files: $FILE_COUNT"
+          echo "has_swift_changes=true" >> $GITHUB_OUTPUT
+          echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
+      
+      - name: Upload changed files list
+        if: steps.changed-files.outputs.has_swift_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-files-list
+          path: changed_files.txt
+          retention-days: 30
+      
+      - name: Setup Node.js for Copilot CLI
+        if: steps.changed-files.outputs.has_swift_changes == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install GitHub Copilot CLI
+        if: steps.changed-files.outputs.has_swift_changes == 'true'
+        run: npm install -g @githubnext/github-copilot-cli
+      
+      - name: Run CompletionChecker Agent via Copilot CLI
+        if: steps.changed-files.outputs.has_swift_changes == 'true'
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Running Async/Await Refactoring Analysis"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          # Construct the agent system prompt
+          AGENT_PROMPT=$(cat .github/agents/completionchecker.agent.md)
+          
+          # Add the file list from changed_files.txt
+          FILES_TO_ANALYZE=$(cat changed_files.txt)
+          
+          # Build the complete prompt
+          PROMPT="$AGENT_PROMPT"
+          PROMPT+=$'\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+          PROMPT+=$'Context:\n'
+          PROMPT+="- Repository: $GITHUB_REPOSITORY"
+          PROMPT+=$'\n- Event: ${{ github.event_name }}'
+          PROMPT+=$'\n- Branch: ${{ github.ref_name }}'
+          PROMPT+=$'\n\nFiles to Analyze:\n'
+          PROMPT+="$FILES_TO_ANALYZE"
+          PROMPT+=$'\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+          PROMPT+=$'Task:\n'
+          PROMPT+=$'1. Analyze the Swift files listed above for completion handlers and continuations\n'
+          PROMPT+=$'2. Invoke the Reporter agent to get refactoring recommendations\n'
+          PROMPT+=$'3. Generate a comprehensive analysis report at /async-refactoring-reports/analysis-report.md\n'
+          PROMPT+=$'4. If any HIGH PRIORITY refactoring opportunities are found, include this exact message at the end:\n'
+          PROMPT+=$'   HIGH PRIORITY ASYNC REFACTORING REQUIRED\n'
+          PROMPT+=$'5. Do not modify this message in any way.\n'
+          
+          echo "Invoking GitHub Copilot Agent..."
+          echo ""
+          
+          # Create reports directory
+          mkdir -p async-refactoring-reports
+          
+          # Execute Copilot CLI
+          # Using < /dev/null to prevent interactive input
+          github-copilot-cli --prompt "$PROMPT" --allow-all-tools --allow-all-paths < /dev/null || {
+            echo "⚠️  Copilot CLI execution completed with warnings"
+          }
+          
+          echo ""
+          echo "✅ Analysis complete"
+      
+      - name: Upload analysis report
+        if: always() && steps.changed-files.outputs.has_swift_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: async-refactoring-report-${{ github.run_id }}
+          path: async-refactoring-reports/
+          retention-days: 30
+      
+      - name: Check for high priority refactoring opportunities
+        if: always() && steps.changed-files.outputs.has_swift_changes == 'true'
+        id: check-priority
+        run: |
+          set -euo pipefail
+          
+          REPORT_PATH="async-refactoring-reports/analysis-report.md"
+          
+          if [ ! -f "$REPORT_PATH" ]; then
+            echo "⚠️  No analysis report found. Copilot may not have generated it."
+            echo "has_high_priority=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Checking for high priority refactoring opportunities..."
+          
+          # Check for the kill switch message
+          if grep -q "HIGH PRIORITY ASYNC REFACTORING REQUIRED" "$REPORT_PATH"; then
+            echo "🔴 HIGH PRIORITY refactoring opportunities detected!"
+            echo "has_high_priority=true" >> $GITHUB_OUTPUT
+            
+            # Extract summary for display
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Summary of High Priority Items:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            cat "$REPORT_PATH" | head -50
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          else
+            echo "✅ No high priority refactoring required, or only Low/Medium priority items found."
+            echo "has_high_priority=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Comment on PR with analysis
+        if: |
+          always() && 
+          github.event_name == 'pull_request' && 
+          steps.changed-files.outputs.has_swift_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const reportPath = 'async-refactoring-reports/analysis-report.md';
+            
+            let comment = '## 🔍 Async/Await Refactoring Analysis\n\n';
+            
+            if (!fs.existsSync(reportPath)) {
+              comment += '⚠️ Analysis report was not generated. Please check the workflow logs.\n';
+            } else {
+              const report = fs.readFileSync(reportPath, 'utf8');
+              const hasHighPriority = report.includes('HIGH PRIORITY ASYNC REFACTORING REQUIRED');
+              
+              if (hasHighPriority) {
+                comment += '🔴 **High Priority Refactoring Opportunities Found**\n\n';
+                comment += 'This PR introduces code with completion handlers or continuations that should be refactored to async/await.\n\n';
+              } else {
+                comment += '✅ No high priority refactoring required.\n\n';
+              }
+              
+              comment += '<details>\n<summary>📋 View Full Analysis Report</summary>\n\n';
+              comment += report;
+              comment += '\n</details>\n\n';
+              comment += '---\n';
+              comment += `📦 [Download full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n`;
+            }
+            
+            // Post the comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+      
+      - name: Optional - Fail on high priority items
+        if: |
+          always() && 
+          steps.check-priority.outputs.has_high_priority == 'true' &&
+          github.event_name == 'pull_request'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "⚠️  HIGH PRIORITY ASYNC REFACTORING REQUIRED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "This PR introduces completion handlers or continuations that"
+          echo "should be refactored to async/await patterns."
+          echo ""
+          echo "Please review the analysis report and address high-priority items."
+          echo ""
+          echo "To view the report:"
+          echo "1. Check the workflow artifacts"
+          echo "2. Review the PR comment with full analysis"
+          echo ""
+          echo "If this is intentional, you can:"
+          echo "1. Document why the pattern is necessary"
+          echo "2. Request review from a senior developer"
+          echo "3. Override this check (not recommended)"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          # Comment this out to make the check informational only
+          # Uncomment to enforce blocking on high priority items
+          # exit 1
