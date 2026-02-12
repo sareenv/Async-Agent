@@ -5,8 +5,32 @@ import Foundation
 // PRIORITY: Evaluate candidates for async/await modernization
 // Consider: URLSession now has native async/await support (iOS 15+)
 // This file contains examples of completion handlers that could be refactored to async/await
+//
+// TEST PR: Adding new methods to verify workflow analysis on pull requests
 
 class NetworkService {
+    
+    // NEW: Test method added for PR workflow validation
+    func uploadFile(
+        _ fileURL: URL,
+        to destination: URL,
+        progress: @escaping (Double) -> Void,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        // Legacy completion handler pattern - candidate for async/await refactoring
+        let task = URLSession.shared.uploadTask(with: URLRequest(url: destination), fromFile: fileURL) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let data = data, let responseString = String(data: data, encoding: .utf8) else {
+                completion(.failure(NetworkError.invalidResponse))
+                return
+            }
+            completion(.success(responseString))
+        }
+        task.resume()
+    }
     
     // Example 1: Completion handler with Result type - SHOULD BE REFACTORED
     // This uses withCheckedThrowingContinuation but URLSession already supports async/await
