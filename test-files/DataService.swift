@@ -2,6 +2,12 @@ import Foundation
 
 // MARK: - DataService
 // This file demonstrates various continuation patterns and their appropriate use cases
+//
+// WORKFLOW ANALYSIS: Continuations and async/await patterns
+// PRIORITY: Document best practices for continuation usage
+// - Checked continuations: Use when wrapping callback APIs that need runtime safety
+// - Unsafe continuations: Only for performance-critical paths with proven correctness
+// - Avoid: Wrapping async code in continuations (unnecessary overhead)
 
 class DataService {
     

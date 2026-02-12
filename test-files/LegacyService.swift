@@ -1,6 +1,9 @@
 import Foundation
 
 // MARK: - LegacyService
+// WORKFLOW ANALYSIS: Legacy callback patterns
+// PRIORITY: Document refactoring constraints and backwards compatibility
+// Migration strategy: Maintain completion handlers for backward compatibility while adding async variants
 // This file shows old-style completion handlers that predate Result type
 
 class LegacyService {

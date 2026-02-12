@@ -1,6 +1,9 @@
 import Foundation
 
 // MARK: - NetworkService
+// WORKFLOW ANALYSIS: Completion handler patterns for network operations
+// PRIORITY: Evaluate candidates for async/await modernization
+// Consider: URLSession now has native async/await support (iOS 15+)
 // This file contains examples of completion handlers that could be refactored to async/await
 
 class NetworkService {
